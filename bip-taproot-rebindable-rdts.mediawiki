@@ -1,0 +1,178 @@
+<pre>
+  BIP: ?
+  Layer: Consensus (hard fork)
+  Title: Taproot Rebindable Transactions under RDTS
+  Authors: connorslab <82235496+connorslab@users.noreply.github.com>
+  Status: Draft
+  Type: Specification
+  Assigned: ?
+  License: CC0-1.0
+  Requires: 340, 341, 342, 348, 349, 446
+</pre>
+
+== Abstract ==
+
+This proposal adds OP_TEMPLATEHASH, OP_CHECKSIGFROMSTACK, and OP_INTERNALKEY to Bitcoin Tapscript while retaining Reduced Data Temporary Softfork (RDTS) restrictions. It adapts the operation set proposed in BIP 448 to a validation context that rejects unknown OP_SUCCESS operations at consensus.
+
+The opcode semantics follow BIPs 446, 348, and 349. This document specifies their interaction with RDTS and existing signature rules. The implementation is running on an experimental signet. A production activation mechanism is not specified.
+
+This is an independently published, unassigned draft. It is not an assigned BIP or a replacement for BIP 448.
+
+== Copyright ==
+
+This document is licensed under CC0-1.0.
+
+== Motivation ==
+
+Bitcoin payment protocols use pre-signed transactions to constrain later spending. Collecting and storing those signatures can require repeated coordination among participants.
+
+Transaction templates allow scripts to commit to the spending transaction. Signature verification over a template permits authorization that is not tied to a particular input outpoint. Access to the Taproot internal key avoids duplicating that key in the script.
+
+These capabilities can support payment channels and shared-output protocols. They do not guarantee confirmation, eliminate fee requirements, or establish the security of a particular Ark or Lightning implementation.
+
+BIP 448 specifies this operation set for an OP_SUCCESS-compatible validation context. Bitcoin's RDTS rules make unknown OP_SUCCESS rejection mandatory. Activation therefore needs an explicit exception for the three defined operations and cannot be described as a soft fork relative to the existing RDTS rules.
+
+== Specification ==
+
+=== Scope ===
+
+The rules apply only to Taproot script-path spends with leaf version 0xc0, after activation. No new meaning is assigned in legacy Script or witness version 0.
+
+{| class="wikitable"
+! Byte !! Operation !! Definition
+|-
+| 0xcb || OP_INTERNALKEY || BIP 349
+|-
+| 0xcc || OP_CHECKSIGFROMSTACK || BIP 348
+|-
+| 0xce || OP_TEMPLATEHASH || BIP 446
+|}
+
+An implementation MUST exclude these three bytes from unknown-OP_SUCCESS rejection when this proposal is active. All other RDTS restrictions remain in force. When inactive, the existing rules apply without these exceptions.
+
+=== OP_TEMPLATEHASH ===
+
+The operation pushes a 32-byte tagged SHA256 hash. Define:
+
+  tag = SHA256("TemplateHash")
+  template_hash = SHA256(tag || tag || message)
+
+The message is the concatenation, in order, of:
+
+* Transaction nVersion, serialized as 4 bytes little-endian.
+* Transaction nLockTime, serialized as 4 bytes little-endian.
+* SHA256 of all input nSequence values serialized in input order, each as 4 bytes little-endian.
+* SHA256 of all transaction outputs serialized consecutively as CTxOut, without an additional vector-count prefix.
+* annex_present, one byte, either 0 or 1.
+* The index of the input being evaluated, as 4 bytes little-endian.
+* If an annex is present, SHA256 of its CompactSize-prefixed serialization, as defined in BIP 341.
+
+The hash does not commit to input outpoints, spent-output amounts, or spent-output scripts. The operation does not itself compare the result with a commitment; the surrounding script supplies that check or signature verification.
+
+Implementations SHOULD reuse the BIP 341 precomputed sequence and output hashes. Header proof-of-work hashing does not change these SHA256 definitions.
+
+The annex field is defined for compatibility with BIP 446. While RDTS is active, an annex is rejected before script execution, so the usable case has annex_present equal to zero.
+
+=== OP_CHECKSIGFROMSTACK ===
+
+The operation requires three stack items. From bottom to top, these are the signature, message, and public key. It removes these items.
+
+A zero-length public key fails script execution. For a 32-byte public key, a nonempty signature MUST be exactly 64 bytes and pass BIP 340 verification of the supplied message. The message is passed directly to BIP 340 verification without an additional application-level hash. Verification failure terminates the script.
+
+An empty signature produces false. A valid nonempty signature produces true. A nonzero public-key length other than 32 retains BIP 348's unknown-key-type behavior: no signature verification is performed, with the result determined by whether the signature is empty. Existing policy may reject unknown key types.
+
+Every nonempty signature consumes 50 units of the Tapscript signature-validation budget, including unknown key types. A negative remaining budget fails execution. Empty signatures consume no signature-validation budget.
+
+All existing stack, element-size, and script-execution limits apply. This operation does not inherit the transaction signature digest or its replay domain from ordinary CHECKSIG.
+
+=== OP_INTERNALKEY ===
+
+After validating the Taproot control block and its commitment to the spent output, the operation pushes the 32-byte x-only internal public key from control-block bytes 1 through 32.
+
+It pushes the internal key, not the tweaked output key. The operation consumes no stack items and performs no signature check. Normal stack limits still apply.
+
+=== RDTS interaction ===
+
+The reference validation context retains:
+
+* The 256-byte stack-element limit.
+* The Taproot control-block limit of 257 bytes, allowing at most seven Merkle branch hashes.
+* Rejection of Taproot annexes.
+* Rejection of OP_IF and OP_NOTIF in Tapscript.
+* Existing output restrictions and the other mandatory validation flags.
+
+The only opcode-related RDTS exception introduced by this operation set is allowing the three defined operations to execute instead of treating them as prohibited unknown OP_SUCCESS operations. This document does not extend or permanently activate RDTS itself.
+
+The experimental signet also retains an existing, bounded exception for its signed-block coinbase envelope. That signet-specific mechanism is not required by these opcodes.
+
+=== Relay policy ===
+
+The implementation defaults to a 32-byte maximum message for each executed CHECKSIGFROMSTACK during mempool admission and local block construction. The maxcsfsmsgsize option can adjust or disable this additional policy limit.
+
+That limit is not a consensus rule. A block MUST NOT be rejected solely because a CSFS message exceeds a node's configured relay limit. Disabling the policy limit does not bypass RDTS or other consensus limits.
+
+=== Activation ===
+
+Production activation is unspecified. No production height, signaling mechanism, or deployment bit is assigned by this draft.
+
+The experimental implementation enables the operation set with -btccovtest on custom signet or regtest. The option is rejected on other networks. This switch is a testing mechanism, not a production deployment proposal.
+
+The existing experimental signet was upgraded without changing its signing challenge, network discriminator, or history. The first recorded INTERNALKEY demonstration spend is in block 3179. This is evidence of deployment, not a proposed consensus activation height.
+
+== Rationale ==
+
+The proposal preserves the opcode numbers, template serialization, and BIP 340 verification rules of the source proposals. Header hashing and transaction-template hashing serve different purposes; changing the template hash would unnecessarily break published vectors and signing implementations.
+
+INTERNALKEY avoids embedding a duplicate internal key and allows the same script tree to be used with different internal keys in newly created outputs. It does not change an existing output's key or authorize spending by itself.
+
+Keeping RDTS restrictions explicit prevents claiming support for constructions that require a prohibited annex, a deeper script tree, or a larger stack element.
+
+An alternative is to adopt BIP 448 without retaining the relevant RDTS restrictions. That would have a broader consensus scope. This draft limits its change to the operation set and its required opcode exceptions.
+
+== Security considerations ==
+
+Template commitments omit input outpoints and amounts. Reusing signing keys or messages across outputs or networks can therefore authorize unintended spends. Applications must define and validate their signing domains and funding assumptions.
+
+An overfunded template may send excess value to fees. An underfunded template may be unspendable unless its committed input structure permits additional funding. Application recovery and fee-bumping designs require separate review.
+
+A usable Taproot key path can bypass script-path conditions. The presence of a template script does not establish that every spend must follow that template.
+
+These rules do not guarantee timely confirmation, safe unilateral exit, or resistance to every fee-pinning strategy. Relay-policy assumptions must be kept separate from consensus guarantees.
+
+Implementations must check stack bounds, signature-budget accounting, template serialization, and the validated origin of the internal key. Cached transaction data must correspond to the transaction being evaluated.
+
+== Backward compatibility ==
+
+Under ordinary BIP 342 rules, assigning meaning to OP_SUCCESS operations tightens validity and can be deployed as a soft fork. Under RDTS, those unknown operations are already rejected at consensus. Allowing them is a relaxation of the existing rules and requires a coordinated consensus upgrade.
+
+An old signet client rejects a block containing an INTERNALKEY spend. Users must upgrade before validating such blocks. A client that already cached the demonstration block as invalid must upgrade and then reconsider that block, or rebuild its block index with the updated client.
+
+Existing signature algorithms, proof-of-work rules, addresses, and transaction serialization are unchanged by this proposal. Existing spends that do not use these operations retain their previous behavior.
+
+== Reference implementation and tests ==
+
+The reference implementation is:
+https://github.com/connorslab/paperclip-bitcoin-signet/commit/7d73834cd626ca84bcc814a8bcf790626576085d
+
+Relevant files include src/script/interpreter.cpp, src/script/interpreter.h, src/script/script.h, src/test/script_tests.cpp, and test/functional/feature_bitcoin_covenants.py.
+
+The reference tests include BIP 446 basic vectors, BIP 340 vectors through CSFS, internal-key extraction, rejection outside Tapscript, combined three-opcode spends under two keys, altered-output rejection, mining, and restart checks. Native validation passed 19 selected unit suites and covenant, signed-signet, CSFS-policy, RDTS, and unified-sighash functional tests.
+
+The full BIP 446 script-assets corpus has not been imported. Exhaustive fuzzing and independent consensus review remain outstanding. Passing these tests is not a protocol-security audit.
+
+Deployment evidence is recorded in [[deployment.md]].
+
+== Acknowledgements ==
+
+This draft builds on BIP 448 by Gregory Sanders, Antoine Poinsot, and Steven Roose; BIP 446 by the same authors; and BIPs 348 and 349 by Brandon Black and Jeremy Rubin, with BIP 349 authored by Brandon Black. Attribution does not imply endorsement of this adaptation.
+
+== References ==
+
+* [https://bips.dev/3/ BIP 3: Updated BIP Process]
+* [https://bips.dev/340/ BIP 340: Schnorr Signatures]
+* [https://bips.dev/341/ BIP 341: Taproot]
+* [https://bips.dev/342/ BIP 342: Tapscript]
+* [https://bips.dev/348/ BIP 348: CHECKSIGFROMSTACK]
+* [https://bips.dev/349/ BIP 349: OP_INTERNALKEY]
+* [https://bips.dev/446/ BIP 446: OP_TEMPLATEHASH]
+* [https://bips.dev/448/ BIP 448: Taproot-native (Re)bindable Transactions]
