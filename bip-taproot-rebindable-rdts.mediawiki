@@ -22,6 +22,16 @@ This is an independently published, unnumbered BIP draft. No number has been ass
 
 This document is licensed under CC0-1.0.
 
+== Differences from BIP 448 ==
+
+The opcode numbers, template hashing, and signature verification semantics are unchanged. This draft adapts their deployment to an RDTS validation context:
+
+* Unknown OP_SUCCESS operations are already rejected at consensus under RDTS. Allowing the three defined operations is therefore a consensus relaxation, unlike BIP 448's soft-fork deployment under ordinary Tapscript rules.
+* RDTS stack-element and control-block limits remain in force. Annexes and Tapscript OP_IF and OP_NOTIF remain prohibited. Constructions using those features require changes or cannot run in this environment.
+* Production activation is unspecified. The reference implementation is deployed only on an experimental signet and is available for regtest.
+
+The implementation's configurable CSFS message-size cap is a separate relay and local-mining policy. It does not change the opcode's consensus signature-verification semantics. Header hashing does not replace SHA256 in the template hash, and existing transaction-signature rules do not automatically provide a replay domain for CSFS messages.
+
 == Motivation ==
 
 Bitcoin payment protocols use pre-signed transactions to constrain later spending. Collecting and storing those signatures can require repeated coordination among participants.
