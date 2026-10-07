@@ -16,7 +16,7 @@ This proposal adds OP_TEMPLATEHASH, OP_CHECKSIGFROMSTACK, and OP_INTERNALKEY to 
 
 The opcode semantics follow BIPs 446, 348, and 349. This document specifies their interaction with RDTS and existing signature rules. The implementation is running on an experimental signet. A production activation mechanism is not specified.
 
-This is an independently published, unassigned draft. It is not an assigned BIP or a replacement for BIP 448.
+This is an independently published, unnumbered BIP draft. No number has been assigned by the BIP editors; the BIP and Assigned header fields remain "?". It is not a replacement for BIP 448.
 
 == Copyright ==
 
@@ -150,6 +150,8 @@ An old signet client rejects a block containing an INTERNALKEY spend. Users must
 Existing signature algorithms, proof-of-work rules, addresses, and transaction serialization are unchanged by this proposal. Existing spends that do not use these operations retain their previous behavior.
 
 == Reference implementation and tests ==
+
+The implementation builds on [https://github.com/bitcoinknots/bitcoin Bitcoin Knots], which provides the RDTS and signature-validation context for this adaptation. The experimental changes are maintained separately. This reference does not imply acceptance or endorsement by Bitcoin Knots maintainers.
 
 The reference implementation is:
 https://github.com/connorslab/paperclip-bitcoin-signet/commit/7d73834cd626ca84bcc814a8bcf790626576085d
