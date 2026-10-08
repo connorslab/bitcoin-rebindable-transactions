@@ -14,7 +14,7 @@
 
 This proposal adds OP_TEMPLATEHASH, OP_CHECKSIGFROMSTACK, and OP_INTERNALKEY to Bitcoin Tapscript while retaining Reduced Data Temporary Softfork (RDTS) restrictions. It adapts the operation set proposed in BIP 448 to a validation context that rejects unknown OP_SUCCESS operations at consensus.
 
-The opcode semantics follow BIPs 446, 348, and 349. This document specifies their interaction with RDTS and existing signature rules. The implementation is running on an experimental signet. A production activation mechanism is not specified.
+TEMPLATEHASH and INTERNALKEY follow BIPs 446 and 349. CHECKSIGFROMSTACK narrows BIP 348 to signatures over the current input's template hash. This document specifies that restriction and its interaction with RDTS and existing signature rules. The implementation is running on an experimental signet. A production activation mechanism is not specified.
 
 This is an independently published, unnumbered BIP draft. No number has been assigned by the BIP editors; the BIP and Assigned header fields remain "?". It is not a replacement for BIP 448.
 
@@ -24,13 +24,14 @@ This document is licensed under CC0-1.0.
 
 == Differences from BIP 448 ==
 
-The opcode numbers, template hashing, and signature verification semantics are unchanged. This draft adapts their deployment to an RDTS validation context:
+The opcode numbers, template hashing, and BIP 340 verification algorithm are unchanged. This draft restricts the permitted CSFS message and adapts deployment to an RDTS validation context:
+* CSFS MUST consume exactly the current input's 32-byte TEMPLATEHASH result. Arbitrary messages, including unrelated 32-byte hashes, are prohibited after activation, even with an empty signature or unknown key type. This deliberately narrows BIP 348/BIP 448 semantics.
 
 * Unknown OP_SUCCESS operations are already rejected at consensus under RDTS. Allowing the three defined operations is therefore a consensus relaxation, unlike BIP 448's soft-fork deployment under ordinary Tapscript rules.
 * RDTS stack-element and control-block limits remain in force. Annexes and Tapscript OP_IF and OP_NOTIF remain prohibited. Constructions using those features require changes or cannot run in this environment.
 * Production activation is unspecified. The reference implementation is deployed only on an experimental signet and is available for regtest.
 
-The implementation's configurable CSFS message-size cap is a separate relay and local-mining policy. It does not change the opcode's consensus signature-verification semantics. Header hashing does not replace SHA256 in the template hash, and existing transaction-signature rules do not automatically provide a replay domain for CSFS messages.
+The CSFS message restriction is fixed consensus, not a configurable relay size limit. Header hashing does not replace SHA256 in the template hash, and existing transaction-signature rules do not automatically provide a replay domain for CSFS messages.
 
 == Motivation ==
 
@@ -53,7 +54,7 @@ The rules apply only to Taproot script-path spends with leaf version 0xc0, after
 |-
 | 0xcb || OP_INTERNALKEY || BIP 349
 |-
-| 0xcc || OP_CHECKSIGFROMSTACK || BIP 348
+| 0xcc || OP_CHECKSIGFROMSTACK || BIP 348, restricted below
 |-
 | 0xce || OP_TEMPLATEHASH || BIP 446
 |}
@@ -86,6 +87,7 @@ The annex field is defined for compatibility with BIP 446. While RDTS is active,
 === OP_CHECKSIGFROMSTACK ===
 
 The operation requires three stack items. From bottom to top, these are the signature, message, and public key. It removes these items.
+Before signature or public-key-type handling, the message MUST be exactly 32 bytes and byte-for-byte equal to OP_TEMPLATEHASH for this transaction and this input index. Otherwise execution MUST fail, including for an empty signature. This is a value-equality rule: the digest may originate from the witness, a script constant or computation; opcode provenance is not tracked. Hashing unrelated data into 32 bytes does not satisfy the rule. Other inputs' template hashes do not satisfy it either.
 
 A zero-length public key fails script execution. For a 32-byte public key, a nonempty signature MUST be exactly 64 bytes and pass BIP 340 verification of the supplied message. The message is passed directly to BIP 340 verification without an additional application-level hash. Verification failure terminates the script.
 
@@ -116,14 +118,14 @@ The only opcode-related RDTS exception introduced by this operation set is allow
 The experimental signet also retains an existing, bounded exception for its signed-block coinbase envelope. That signet-specific mechanism is not required by these opcodes.
 
 === Relay policy ===
+Updated nodes enforce the template-only rule for mempool admission and local mining before its block activation. Previously mined blocks retain their historical rules. The consensus restriction cannot be disabled using a relay-policy option.
 
-The implementation defaults to a 32-byte maximum message for each executed CHECKSIGFROMSTACK during mempool admission and local block construction. The maxcsfsmsgsize option can adjust or disable this additional policy limit.
-
-That limit is not a consensus rule. A block MUST NOT be rejected solely because a CSFS message exceeds a node's configured relay limit. Disabling the policy limit does not bypass RDTS or other consensus limits.
+The 32-byte requirement is fixed consensus, not operator-configurable policy. The former maxcsfsmsgsize option is removed. No transaction-wide CSFS byte limit is added: a tested two-input Ark refund uses two distinct 32-byte template hashes. Historical blocks before activation retain their previous rules.
 
 === Activation ===
 
 Production activation is unspecified. No production height, signaling mechanism, or deployment bit is assigned by this draft.
+The experimental signet enforces template-only CSFS from block height 3250 inclusive. Earlier blocks retain the previous CSFS rules. Custom covenant regtest defaults to activation at height zero; the regtest-only testactivationheight=csfstemplate override can schedule another height or use -1 for historical-rule tests. There is no signet opt-out.
 
 The experimental implementation enables the operation set with -btccovtest on custom signet or regtest. The option is rejected on other networks. This switch is a testing mechanism, not a production deployment proposal.
 
@@ -131,7 +133,7 @@ The existing experimental signet was upgraded without changing its signing chall
 
 == Rationale ==
 
-The proposal preserves the opcode numbers, template serialization, and BIP 340 verification rules of the source proposals. Header hashing and transaction-template hashing serve different purposes; changing the template hash would unnecessarily break published vectors and signing implementations.
+The proposal preserves opcode numbers, template serialization, and the BIP 340 verification algorithm. Restricting CSFS messages to the transaction's template removes its general-purpose arbitrary-message authorization capability while preserving the tested covenant refresh and exit paths. General delegation and oracle constructions are not promised to remain compatible. Header hashing and transaction-template hashing serve different purposes; changing the template hash would unnecessarily break published vectors and signing implementations.
 
 INTERNALKEY avoids embedding a duplicate internal key and allows the same script tree to be used with different internal keys in newly created outputs. It does not change an existing output's key or authorize spending by itself.
 
@@ -140,6 +142,7 @@ Keeping RDTS restrictions explicit prevents claiming support for constructions t
 An alternative is to adopt BIP 448 without retaining the relevant RDTS restrictions. That would have a broader consensus scope. This draft limits its change to the operation set and its required opcode exceptions.
 
 == Security considerations ==
+Template-only CSFS is not a guarantee against arbitrary data elsewhere in a transaction. Keys, outputs and other script paths still require their own analysis. The rule restricts messages, not the existing unknown-key-type upgrade semantics. Tightening rules can make outstanding outputs relying on arbitrary-message CSFS unspendable; network upgrades must account for such outputs before activation.
 
 Template commitments omit input outpoints and amounts. Reusing signing keys or messages across outputs or networks can therefore authorize unintended spends. Applications must define and validate their signing domains and funding assumptions.
 
@@ -152,6 +155,7 @@ These rules do not guarantee timely confirmation, safe unilateral exit, or resis
 Implementations must check stack bounds, signature-budget accounting, template serialization, and the validated origin of the internal key. Cached transaction data must correspond to the transaction being evaluated.
 
 == Backward compatibility ==
+The template-only addition is a tightening relative to the earlier unrestricted-CSFS experimental client: old clients may accept blocks that upgraded clients reject. Participants must upgrade to enforce it. The initial addition of the three operations under RDTS remains the separate consensus relaxation described below.
 
 Under ordinary BIP 342 rules, assigning meaning to OP_SUCCESS operations tightens validity and can be deployed as a soft fork. Under RDTS, those unknown operations are already rejected at consensus. Allowing them is a relaxation of the existing rules and requires a coordinated consensus upgrade.
 
@@ -164,11 +168,11 @@ Existing signature algorithms, proof-of-work rules, addresses, and transaction s
 The implementation builds on [https://github.com/bitcoinknots/bitcoin Bitcoin Knots], which provides the RDTS and signature-validation context for this adaptation. The experimental changes are maintained separately. This reference does not imply acceptance or endorsement by Bitcoin Knots maintainers.
 
 The reference implementation is:
-https://github.com/connorslab/paperclip-bitcoin-signet/commit/7d73834cd626ca84bcc814a8bcf790626576085d
+https://github.com/connorslab/paperclip-bitcoin-signet/commit/8b0c84ea587189af4bb3a97faea21845b77fb83d
 
 Relevant files include src/script/interpreter.cpp, src/script/interpreter.h, src/script/script.h, src/test/script_tests.cpp, and test/functional/feature_bitcoin_covenants.py.
 
-The reference tests include BIP 446 basic vectors, BIP 340 vectors through CSFS, internal-key extraction, rejection outside Tapscript, combined three-opcode spends under two keys, altered-output rejection, mining, and restart checks. Native validation passed 19 selected unit suites and covenant, signed-signet, CSFS-policy, RDTS, and unified-sighash functional tests.
+The reference tests include BIP 446 basic vectors, BIP 340 vectors through CSFS, internal-key extraction, rejection outside Tapscript, combined three-opcode spends under two keys, altered-output rejection, mining, and restart checks. Native validation passed 19 selected unit suites and covenant, signed-signet, historical-CSFS, template-only activation, RDTS, and unified-sighash functional tests. Both single-balance experimental Ark refresh and ASP/watchman lifecycle harnesses passed against the deployment binary. Tests cover wrong-length and unrelated messages, empty signatures, historical block acceptance, rejection at activation, restart, and independent exit. These results do not establish compatibility for all Ark constructions.
 
 The full BIP 446 script-assets corpus has not been imported. Exhaustive fuzzing and independent consensus review remain outstanding. Passing these tests is not a protocol-security audit.
 
