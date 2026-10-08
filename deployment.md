@@ -5,6 +5,7 @@
 Deployed October 8, 2026 UTC at height 3240; version
 `paperclip-signet3-template-csfs`.
 [Source commit](https://github.com/connorslab/paperclip-bitcoin-signet/commit/8b0c84ea587189af4bb3a97faea21845b77fb83d).
+[Test binaries and checksums](https://github.com/connorslab/paperclip-bitcoin-signet/releases/tag/v0.2.0-bitcoin-signet).
 
 Consensus activation is **height 3250 inclusive**. Updated mempools enforce the
 rule immediately. CSFS requires exactly 32 bytes equal to the current input's
