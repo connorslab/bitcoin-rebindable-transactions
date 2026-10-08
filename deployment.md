@@ -76,3 +76,9 @@ If an old client has already marked the demonstration block invalid, upgrade fir
 Then check the chain tip and run verifychain. Rebuilding the block index with the upgraded binary is an alternative.
 
 This is not an independent audit or a complete Ark or Lightning integration test. The full BIP 446 script-assets corpus, additional fuzzing, and broader consensus review remain outstanding.
+
+
+Activation confirmed: signet block **3250**, hash
+`4a310b0732f864f73ec808946ab153cb85db2cf5200dbe0c0f40ca3eb8b938ec`.
+The node continued beyond activation and passed full-chain verification at
+height 3251. No forced blocks, chain reset or activation-time restart was used.
